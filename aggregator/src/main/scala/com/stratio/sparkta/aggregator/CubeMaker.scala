@@ -44,6 +44,7 @@ case class CubeMaker(cubes: Seq[Cube]) {
    */
   def setUp(inputStream: DStream[Event]): Seq[DStream[(DimensionValuesTime, Map[String, Option[Any]])]] = {
     cubes.map(cube => {
+      inputStream.foreach(rdd => println(rdd.toArray().toList))
       val currentCube = new CubeOperations(cube, cube.checkpointTimeDimension, cube.checkpointGranularity)
       val extractedDimensionsStream = currentCube.extractDimensionsAggregations(inputStream)
       cube.aggregate(extractedDimensionsStream)

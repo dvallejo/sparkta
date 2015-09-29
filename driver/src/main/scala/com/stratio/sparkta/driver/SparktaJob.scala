@@ -44,8 +44,6 @@ object SparktaJob extends SLF4JLogging {
 
   def runSparktaJob(sc: SparkContext, apConfig: AggregationPoliciesModel): Any = {
     val checkpointPolicyPath = apConfig.checkpointPath.concat(File.separator).concat(apConfig.name)
-    //TODO check the problem in the checkpoint and fault tolerance
-    // deletePreviousCheckpointPath(checkpointPolicyPath)
     val ssc = SparkContextFactory.sparkStreamingInstance(
       new Duration(apConfig.sparkStreamingWindow), checkpointPolicyPath)
     val input = SparktaJob.input(apConfig, ssc.get)

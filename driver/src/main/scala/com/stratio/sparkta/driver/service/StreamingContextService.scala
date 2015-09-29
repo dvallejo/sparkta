@@ -47,7 +47,8 @@ case class StreamingContextService(policyStatusActor: Option[ActorRef] = None, g
   def standAloneStreamingContext(apConfig: AggregationPoliciesModel, files: Seq[File]): Option[StreamingContext] = {
     runStatusListener(apConfig.id.get)
     SparktaJob.runSparktaJob(getStandAloneSparkContext(apConfig, files), apConfig)
-    SparkContextFactory.sparkStreamingInstance
+    val x = SparkContextFactory.sparkStreamingInstance
+    x
   }
 
   def clusterStreamingContext(apConfig: AggregationPoliciesModel,

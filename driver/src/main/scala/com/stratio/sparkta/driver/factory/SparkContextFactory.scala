@@ -48,12 +48,12 @@ object SparkContextFactory extends SLF4JLogging {
   def sparkStreamingInstance: Option[StreamingContext] = ssc
 
   def sparkStreamingInstance(batchDuration: Duration, checkpointDir: String): Option[StreamingContext] = {
-    synchronized {
-      ssc match {
-        case Some(_) => ssc
-        case None => ssc = Some(getNewStreamingContext(batchDuration, checkpointDir))
-      }
-    }
+    val ssc = Option(StreamingContext.getOrCreate(checkpointDir, { () =>
+      val ssc = new StreamingContext(sc.get, batchDuration)
+      ssc.checkpoint(checkpointDir)
+      ssc
+    }))
+    this.ssc = ssc
     ssc
   }
 
@@ -108,15 +108,16 @@ object SparkContextFactory extends SLF4JLogging {
 
   def destroySparkStreamingContext: Unit = {
     synchronized {
-      if (ssc.isDefined) {
-        val stopGracefully =
-          Try(SparktaConfig.getDetailConfig.get.getBoolean(AppConstant.ConfigStopGracefully)).getOrElse(true)
-        log.info(s"Stopping streamingContext with name: ${ssc.get.sparkContext.appName}")
-        ssc.get.stop(false, stopGracefully)
-        log.info(s"Stopped streamingContext with name: ${ssc.get.sparkContext.appName}")
-        ssc = None
-      } else {
-        log.warn("Cannot destroy Spark Streaming Context")
+      StreamingContext.getActive() match {
+        case Some(ssc) =>
+          val stopGracefully =
+            Try(SparktaConfig.getDetailConfig.get.getBoolean(AppConstant.ConfigStopGracefully)).getOrElse(true)
+          log.info(s"Stopping streamingContext with name: ${ssc.sparkContext.appName}")
+          StreamingContext.getActive().get.stop(false, stopGracefully)
+          log.info(s"Stopped streamingContext with name: ${ssc.sparkContext.appName}")
+
+        case None =>
+          log.warn("Cannot destroy Spark Streaming Context")
       }
     }
   }
