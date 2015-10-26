@@ -39,7 +39,6 @@
         <module>aggregator</module>
         <module>serving-core</module>
         <module>sdk</module>
-        <module>plugins</module>
         <module>serving-api</module>
         <module>doc</module>
         <module>web</module>
@@ -142,6 +141,14 @@
             <id>sgomezg</id>
             <name>Sergio Gómez</name>
             <email>sgomez@stratio.com</email>
+            <roles>
+                <role>developer</role>
+            </roles>
+        </developer>
+        <developer>
+            <id>dvallejo</id>
+            <name>David Vallejo</name>
+            <email>dvallejo@stratio.com</email>
             <roles>
                 <role>developer</role>
             </roles>
@@ -469,7 +476,7 @@
                 <artifactId>scala-maven-plugin</artifactId>
                 <version>3.2.0</version>
                 <configuration>
-               	    <checkMultipleScalaVersions>false</checkMultipleScalaVersions>
+                    <checkMultipleScalaVersions>false</checkMultipleScalaVersions>
                     <recompileMode>incremental</recompileMode>
                     <useZincServer>true</useZincServer>
                 </configuration>
