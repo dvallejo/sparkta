@@ -21,20 +21,21 @@ import java.util.concurrent.TimeUnit
 import akka.actor.{ActorRef, Actor}
 import akka.event.slf4j.SLF4JLogging
 import akka.util.Timeout
-import com.stratio.sparkta.serving.core.CuratorFactoryHolder
+import com.stratio.sparkta.common.config.TypesafeConfigComponent
+import com.stratio.sparkta.repositories.zookeeper.ZookeeperRepositoryComponent
 import com.stratio.sparkta.serving.core.constants.AppConstant
 import com.stratio.sparkta.serving.core.models.{PolicyStatusModel, SparktaSerializer}
 import com.stratio.sparkta.serving.core.policy.status.PolicyStatusActor._
-import org.apache.curator.framework.CuratorFramework
-import org.apache.curator.framework.recipes.cache.{NodeCache, NodeCacheListener}
+import org.apache.curator.framework.recipes.cache.NodeCache
 import org.json4s.jackson.Serialization.{read, write}
 
-import scala.collection.JavaConversions
-import scala.concurrent.Future
 import scala.util.{Failure, Success, Try}
 
-class PolicyStatusActor(curatorFramework: CuratorFramework)
-  extends Actor with SLF4JLogging with SparktaSerializer {
+class PolicyStatusActor extends Actor
+  with SLF4JLogging
+  with SparktaSerializer
+  with ZookeeperRepositoryComponent
+  with TypesafeConfigComponent {
 
   override def receive: Receive = {
     case Create(policyStatus) => sender ! create(policyStatus)
@@ -44,11 +45,9 @@ class PolicyStatusActor(curatorFramework: CuratorFramework)
     case AddListener(name, callback) => addListener(name, callback)
   }
 
-
-
   def kill(policyName: String): Unit = {
     val SparkStreamingContextActorPrefix: String = "sparkStreamingContextActor"
-    implicit  val timeout:Timeout=Timeout(2L,TimeUnit.SECONDS)
+    implicit val timeout: Timeout = Timeout(2L, TimeUnit.SECONDS)
     val pActor: Option[Try[ActorRef]] = context.
       actorSelection(s"$SparkStreamingContextActorPrefix-${policyName.replace(" ", "_")}")
       .resolveOne().value
@@ -64,31 +63,33 @@ class PolicyStatusActor(curatorFramework: CuratorFramework)
     val statusPath = s"${AppConstant.ContextPath}/${policyStatus.id}"
 
     //TODO check the correct statuses
-    if (Option(curatorFramework.checkExists.forPath(statusPath)).isDefined) {
-      val ips =
-        read[PolicyStatusModel](new String(curatorFramework.getData.forPath(statusPath)))
-      log.info(s">> Updating context ${policyStatus.id} : <${ips.status}> to <${policyStatus.status}>")
-      //validate(Some(ips.status), policyStatus.status)
-      curatorFramework.setData().forPath(statusPath, write(policyStatus).getBytes)
-      Some(policyStatus)
-    } else None
+    repository.get(statusPath).toOption.flatMap { elementOpt =>
+      elementOpt.map { element =>
+        val ips =
+          read[PolicyStatusModel](new String(element))
+        log.info(s">> Updating context ${policyStatus.id} : <${ips.status}> to <${policyStatus.status}>")
+        //validate(Some(ips.status), policyStatus.status)
+        repository.update(statusPath, write(policyStatus).getBytes)
+        policyStatus
+      }
+    }
   }
 
   def create(policyStatus: PolicyStatusModel): Option[PolicyStatusModel] = {
     val statusPath = s"${AppConstant.ContextPath}/${policyStatus.id}"
 
-    if (CuratorFactoryHolder.existsPath(statusPath)) {
-      val ips =
-        read[PolicyStatusModel](new String(curatorFramework.getData.forPath(statusPath)))
-      log.info(s">> Updating context ${policyStatus.id} : <${ips.status}> to <${policyStatus.status}>")
-      //validate(Some(ips.status), policyStatus.status)
-      curatorFramework.setData().forPath(statusPath, write(policyStatus).getBytes)
-      Some(policyStatus)
-    } else {
-      log.info(s">> Creating policy context |${policyStatus.id}| to <${policyStatus.status}>")
-      validate(None, policyStatus.status)
-      curatorFramework.create.creatingParentsIfNeeded.forPath(statusPath, write(policyStatus).getBytes)
-      Some(policyStatus)
+    repository.get(statusPath) match {
+      case Success(Some(element)) =>
+        val ips = read[PolicyStatusModel](new String(element))
+        log.info(s">> Updating context ${policyStatus.id} : <${ips.status}> to <${policyStatus.status}>")
+        //validate(Some(ips.status), policyStatus.status)
+        repository.update(statusPath, write(policyStatus).getBytes)
+        Some(policyStatus)
+      case _ =>
+        log.info(s">> Creating policy context |${policyStatus.id}| to <${policyStatus.status}>")
+        validate(None, policyStatus.status)
+        repository.create(statusPath, write(policyStatus).getBytes)
+        Some(policyStatus)
     }
   }
 
@@ -97,21 +98,29 @@ class PolicyStatusActor(curatorFramework: CuratorFramework)
 
     log.info(s">> Creating policy context |${policyStatus.id}| to <${policyStatus.status}>")
     validate(None, policyStatus.status)
-    curatorFramework.create.creatingParentsIfNeeded.forPath(statusPath, write(policyStatus).getBytes)
+    repository.create(statusPath, write(policyStatus).getBytes)
     Some(policyStatus)
   }
 
-  def findAll(): Unit = {
-    sender ! Response(Try({
-      val contextPath = s"${AppConstant.ContextPath}"
-      if (CuratorFactoryHolder.existsPath(contextPath)) {
-        val children = curatorFramework.getChildren.forPath(contextPath)
-        JavaConversions.asScalaBuffer(children).toList.map(element =>
-          read[PolicyStatusModel](new String(curatorFramework.getData.forPath(
-            s"${AppConstant.ContextPath}/$element")))).toSeq
-      } else Seq()
-    }))
+  def findAll: Unit = {
+
+    val contextPath = s"${AppConstant.ContextPath}"
+    val childrenTry = repository.getSubRepository(contextPath)
+
+    val response =
+      childrenTry match {
+        case Success(children) =>
+          children.map(element =>
+            repository.get(s"${AppConstant.ContextPath}/$element") map { elementOpt =>
+              elementOpt.map(e => read[PolicyStatusModel](new String(e)))
+            }
+          )
+        case _ => Seq()
+      }
+
+    sender ! response
   }
+
 
   /**
    * Adds a listener to one policy and executes the callback when it changed.
@@ -120,19 +129,7 @@ class PolicyStatusActor(curatorFramework: CuratorFramework)
    */
   def addListener(id: String, callback: (PolicyStatusModel, NodeCache) => Unit): Unit = {
     val contextPath = s"${AppConstant.ContextPath}/$id"
-    val nodeCache: NodeCache = new NodeCache(curatorFramework, contextPath)
-
-    nodeCache.getListenable.addListener(new NodeCacheListener {
-      override def nodeChanged(): Unit = {
-        Try(new String(nodeCache.getCurrentData.getData)) match {
-          case Success(value) => {
-            callback(read[PolicyStatusModel](value), nodeCache)
-          }
-          case Failure(e) => log.error(s"NodeCache value: ${nodeCache.getCurrentData}", e)
-        }
-      }
-    })
-    nodeCache.start()
+    repository.addListener(contextPath, callback)
   }
 }
 

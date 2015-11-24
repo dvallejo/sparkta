@@ -13,6 +13,7 @@
   * See the License for the specific language governing permissions and
   * limitations under the License.
   */
+/*
 
 package com.stratio.sparkta.serving.core
 
@@ -112,4 +113,4 @@ object CuratorFactoryHolder extends SLF4JLogging {
   protected def getStringConfigValue(config: Config, key: String): String = getPathValue(key, config, classOf[String])
 
   protected def getIntConfigValue(config: Config, key: String): Int = getPathValue(key, config, classOf[Int])
-}
+}*/

@@ -20,28 +20,26 @@ import java.util.UUID
 
 import akka.actor.Actor
 import akka.event.slf4j.SLF4JLogging
-import com.stratio.sparkta.serving.core.CuratorFactoryHolder
+import com.stratio.sparkta.repositories.zookeeper.ZookeeperRepositoryComponent
 import com.stratio.sparkta.serving.core.actor.FragmentActor._
 import com.stratio.sparkta.serving.core.constants.AppConstant
 import com.stratio.sparkta.serving.core.exception.ServingCoreException
 import com.stratio.sparkta.serving.core.models.{ErrorModel, FragmentElementModel, SparktaSerializer}
-import org.apache.curator.framework.CuratorFramework
 import org.apache.zookeeper.KeeperException.NoNodeException
 import org.json4s.jackson.Serialization.{read, write}
 import spray.httpx.Json4sJacksonSupport
 
-import scala.collection.JavaConversions
 import scala.util.{Failure, Success, Try}
 
-class FragmentActor(curatorFramework: CuratorFramework)
-  extends Actor
+class FragmentActor extends Actor
+  with ZookeeperRepositoryComponent
   with Json4sJacksonSupport
   with SLF4JLogging
   with SparktaSerializer {
 
   override def receive: Receive = {
     case FindByTypeAndId(fragmentType, id) => findByTypeAndId(fragmentType, id)
-    case FindByTypeAndName(fragmentType, name) => findByTypeAndName(fragmentType, name.toLowerCase())
+    case FindByTypeAndName(fragmentType, name) => findByTypeAndName(fragmentType, name.toLowerCase)
     case Create(fragment) => create(fragment)
     case Update(fragment) => update(fragment)
     case DeleteByTypeAndId(fragmentType, id) => deleteByTypeAndId(fragmentType, id)
@@ -49,43 +47,73 @@ class FragmentActor(curatorFramework: CuratorFramework)
   }
 
   def findByType(fragmentType: String): Unit =
-    sender ! ResponseFragments(Try({
-      val children = curatorFramework.getChildren.forPath(FragmentActor.fragmentPath(fragmentType))
-      JavaConversions.asScalaBuffer(children).toList.map(element =>
-        read[FragmentElementModel](new String(curatorFramework.getData.forPath(
-          s"${FragmentActor.fragmentPath(fragmentType)}/$element")))).toSeq
-    }).recover {
-      case e: NoNodeException => Seq()
-    })
+    sender !
+      ResponseFragments(
+        repository.getSubRepository(FragmentActor.fragmentPath(fragmentType))
+          .map { elements =>
+            elements.flatMap { element =>
+              repository.get(s"${FragmentActor.fragmentPath(fragmentType)}/$element")
+                .toOption
+                .flatMap(
+                  _.map {
+                    data: Array[Byte] => read[FragmentElementModel](new String(data))
+                  }
+                )
+            }
+          }
+          .recover {
+            case e: NoNodeException => Seq()
+          }
+      )
 
   def findByTypeAndId(fragmentType: String, id: String): Unit =
-    sender ! new ResponseFragment(Try({
-      log.info(s"> Retrieving information for path: ${FragmentActor.fragmentPath(fragmentType)}/$id)")
-      read[FragmentElementModel](new String(curatorFramework.getData.forPath(
-        s"${FragmentActor.fragmentPath(fragmentType)}/$id")))
-    }).recover {
-      case e: NoNodeException => throw new ServingCoreException(ErrorModel.toString(
-        new ErrorModel(ErrorModel.CodeNotExistsFragmentWithId, s"No fragment of type ${fragmentType} with id ${id}.")
-      ))
-    })
+    sender !
+      ResponseFragment {
+        log.info(s"> Retrieving information for path: ${FragmentActor.fragmentPath(fragmentType)}/$id)")
+        repository.get(s"${FragmentActor.fragmentPath(fragmentType)}/$id")
+          .flatMap {
+            case Some(data) => Success(read[FragmentElementModel](new String(data)))
+            case None => Failure(new Exception())
+          }
+          .recover {
+            case e: NoNodeException =>
+              throw new ServingCoreException(
+                ErrorModel.toString(
+                  new ErrorModel(
+                    ErrorModel.CodeNotExistsFragmentWithId, s"No fragment of type $fragmentType with id $id."
+                  )
+                )
+              )
+          }
+      }
 
   def findByTypeAndName(fragmentType: String, name: String): Unit =
-    sender ! ResponseFragment(Try({
-      val children = curatorFramework.getChildren.forPath(FragmentActor.fragmentPath(fragmentType))
-      JavaConversions.asScalaBuffer(children).toList.map(element =>
-        read[FragmentElementModel](new String(curatorFramework.getData.forPath(
-          s"${FragmentActor.fragmentPath(fragmentType)}/$element"))))
-        .filter(fragment => fragment.name == name).head
-    }).recover {
-      case e: NoNodeException => throw new ServingCoreException(ErrorModel.toString(
-        new ErrorModel(ErrorModel.CodeNotExistsFragmentWithName,
-          s"No fragment of type ${fragmentType} with name ${name}.")
-      ))
-      case e: NoSuchElementException => throw new ServingCoreException(ErrorModel.toString(
-        new ErrorModel(ErrorModel.CodeNotExistsPolicytWithName,
-          s"No fragment of type ${fragmentType} with name ${name}")
-      ))
-    })
+    sender !
+      ResponseFragment {
+        repository.getSubRepository(FragmentActor.fragmentPath(fragmentType))
+          .map { elements =>
+            elements.flatMap { element =>
+              repository.get(s"${FragmentActor.fragmentPath(fragmentType)}/$element")
+                .toOption
+                .flatMap(
+                  _.map {
+                    data: Array[Byte] => read[FragmentElementModel](new String(data))
+                  }
+                )
+            }
+            .filter(fragment => fragment.name == name).head
+          }
+          .recover {
+            case e: NoNodeException => throw new ServingCoreException(ErrorModel.toString(
+              new ErrorModel(ErrorModel.CodeNotExistsFragmentWithName,
+                s"No fragment of type $fragmentType with name $name.")
+            ))
+            case e: NoSuchElementException => throw new ServingCoreException(ErrorModel.toString(
+              new ErrorModel(ErrorModel.CodeNotExistsPolicytWithName,
+                s"No fragment of type $fragmentType with name $name")
+            ))
+          }
+      }
 
   def create(fragment: FragmentElementModel): Unit =
     sender ! ResponseFragment(Try({
@@ -126,33 +154,46 @@ class FragmentActor(curatorFramework: CuratorFramework)
     })
 
   def deleteByTypeAndId(fragmentType: String, id: String): Unit =
-    sender ! Response(Try({
-      curatorFramework.delete().forPath(s"${FragmentActor.fragmentPath(fragmentType)}/$id")
-    }).recover {
-      case e: NoNodeException => throw new ServingCoreException(ErrorModel.toString(
-        new ErrorModel(ErrorModel.CodeNotExistsFragmentWithId, s"No fragment of type ${fragmentType} with id ${id}.")
-      ))
-    })
+    sender !
+      Response(
+        repository
+          .delete(s"${FragmentActor.fragmentPath(fragmentType)}/$id")
+          .recover {
+            case e: NoNodeException =>
+              throw new ServingCoreException(ErrorModel.toString(
+                new ErrorModel(
+                  ErrorModel.CodeNotExistsFragmentWithId, s"No fragment of type ${fragmentType} with id ${id}."
+                )
+            ))
+          }
+      )
 
   private def existsByTypeAndName(fragmentType: String, name: String, id: Option[String] = None): Boolean = {
-    Try({
-      val fragmentLocation = fragmentPath(fragmentType)
-      if (CuratorFactoryHolder.existsPath(fragmentLocation)) {
-        val children = curatorFramework.getChildren.forPath(fragmentLocation)
-        JavaConversions.asScalaBuffer(children).toList.map(element =>
-          read[FragmentElementModel](new String(curatorFramework.getData.forPath(s"$fragmentLocation/$element"))))
-          .filter(fragment => {
-            if (id.isDefined) fragment.name == name && fragment.id.get != id.get
-            else fragment.name == name
-          }).toSeq.nonEmpty
-      } else false
-    }) match {
-      case Success(result) => result
-      case Failure(exception) => {
-        log.error(exception.getLocalizedMessage, exception)
-        false
+    val fragmentLocation = fragmentPath(fragmentType)
+
+    repository.exists(fragmentLocation)
+      .map { _ =>
+        repository.getSubRepository(fragmentLocation)
+          .map { elements =>
+            elements.flatMap { element =>
+              repository.get(s"$fragmentLocation/$element")
+                .toOption
+                .flatMap(
+                  _.map {
+                    data: Array[Byte] => read[FragmentElementModel](new String(data))
+                  }
+                )
+            }
+            .filter(fragment => {
+              if (id.isDefined) fragment.name == name && fragment.id.get != id.get
+              else fragment.name == name
+            })
+          }
       }
-    }
+      .recover {
+        case ex: Throwable => log.error(ex.getLocalizedMessage, ex)
+      }
+      .isSuccess
   }
 }
 
