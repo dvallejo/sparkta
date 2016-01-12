@@ -120,7 +120,7 @@
         <!-- TODO (anistal) Delete it when applicable -->
         <dependency>
             <groupId>com.stratio</groupId>
-            <artifactId>common</artifactId>
+            <artifactId>common-utils</artifactId>
             <version>0.1.0-SNAPSHOT</version>
         </dependency>
     </dependencies>
