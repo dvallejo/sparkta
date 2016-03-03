@@ -13,10 +13,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.stratio.sparta.serving.api.helpers
 
-import scala.collection.JavaConversions
-import scala.util.{Failure, Success, Try}
+package com.stratio.sparta.serving.api.helpers
 
 import akka.actor.{ActorSystem, Props}
 import akka.event.slf4j.SLF4JLogging
@@ -26,6 +24,7 @@ import org.apache.zookeeper.KeeperException.NoNodeException
 import org.json4s.jackson.Serialization._
 import spray.can.Http
 
+import com.stratio.sparta.serving.api.ssl.SSLSupport
 import com.stratio.sparta.driver.factory.SparkContextFactory
 import com.stratio.sparta.driver.service.StreamingContextService
 import com.stratio.sparta.serving.api.actor._
@@ -34,18 +33,19 @@ import com.stratio.sparta.serving.core.actor.FragmentActor
 import com.stratio.sparta.serving.core.constants.{AkkaConstant, AppConstant}
 import com.stratio.sparta.serving.core.models.{PolicyStatusModel, SpartaSerializer}
 import com.stratio.sparta.serving.core.policy.status.{PolicyStatusActor, PolicyStatusEnum}
+import scala.collection.JavaConversions
+import scala.util.{Failure, Success, Try}
 
 /**
  * Helper with common operations used to create a Sparta context used to run the application.
  */
 object SpartaHelper extends SLF4JLogging
-  with SpartaSerializer {
+  with SpartaSerializer with SSLSupport  {
 
   implicit var system: ActorSystem = _
 
   /**
    * Initializes Sparta's akka system running an embedded http server with the REST API.
-   *
    * @param appName with the name of the application.
    */
 
@@ -82,10 +82,11 @@ object SpartaHelper extends SLF4JLogging
       val controllerActor = system.actorOf(RoundRobinPool(controllerInstances)
         .props(Props(new ControllerActor(actors, curatorFramework))), AkkaConstant.ControllerActor)
 
-      IO(Http) ! Http.Bind(controllerActor, interface = SpartaConfig.apiConfig.get.getString("host"),
+      IO(Http) ! Http.Bind(controllerActor, interface = "anistal",
         port = SpartaConfig.apiConfig.get.getInt("port"))
-      IO(Http) ! Http.Bind(swaggerActor, interface = SpartaConfig.swaggerConfig.get.getString("host"),
-        port = SpartaConfig.swaggerConfig.get.getInt("port"))
+
+//      IO(Http) ! Http.Bind(swaggerActor, interface = SpartaConfig.swaggerConfig.get.getString("host"),
+//        port = SpartaConfig.swaggerConfig.get.getInt("port"))
 
       log.info("> Actors System UP!")
     } else log.info("Config for Sparta is not defined")
