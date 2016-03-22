@@ -38,8 +38,14 @@ case class AggregationPoliciesModel(id: Option[String] = None,
 case object AggregationPoliciesModel {
 
   val sparkStreamingWindow = "2s"
+
   val storageDefaultValue = Some("MEMORY_AND_DISK_SER_2")
-  def checkpointPath(policy: AggregationPoliciesModel): String = s"${policy.checkpointPath}/${policy.name}"
+
+  def goesCheckpointToHDFS(policy: AggregationPoliciesModel): Boolean =
+    policy.checkpointPath.startsWith("hdfs://")
+
+  def checkpointPath(policy: AggregationPoliciesModel): String =
+    s"${policy.checkpointPath.replace("hdfs://", "")}/${policy.name}"
 }
 
 case class PolicyWithStatus(status: PolicyStatusEnum.Value,
